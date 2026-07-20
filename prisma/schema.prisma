@@ -1,0 +1,110 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = "postgresql://postgres:1234@localhost:5432/payment_bot"
+}
+
+// ─── Enums ───────────────────────────────────────────────────────────
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+}
+
+// ─── User: Telegram user linked by phone number ─────────────────────
+
+model User {
+  id              Int       @id @default(autoincrement())
+  telegramId      BigInt    @unique @map("telegram_id")
+  phone           String    @unique
+  firstName       String?   @map("first_name")
+  lastName        String?   @map("last_name")
+  username        String?
+  registeredAt    DateTime  @default(now()) @map("registered_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  students        Student[]
+
+  @@map("users")
+}
+
+// ─── Student: child/student profile ─────────────────────────────────
+
+model Student {
+  id              Int           @id @default(autoincrement())
+  fullName        String        @map("full_name")
+  userId          Int           @map("user_id")
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  enrollments     Enrollment[]
+  payments        Payment[]
+
+  @@map("students")
+}
+
+// ─── Course: subject with teacher and schedule ──────────────────────
+
+model Course {
+  id              Int           @id @default(autoincrement())
+  name            String
+  teacherName     String        @map("teacher_name")
+  schedule        String        // e.g. "Dush-Chor-Juma 14:00-15:30"
+  monthlyFee      Int           @map("monthly_fee") // in UZS (tiyin = smallest unit)
+  description     String?
+  isActive        Boolean       @default(true) @map("is_active")
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+
+  enrollments     Enrollment[]
+
+  @@map("courses")
+}
+
+// ─── Enrollment: many-to-many Student ↔ Course ──────────────────────
+
+model Enrollment {
+  id              Int       @id @default(autoincrement())
+  studentId       Int       @map("student_id")
+  courseId         Int       @map("course_id")
+  enrolledAt      DateTime  @default(now()) @map("enrolled_at")
+  isActive        Boolean   @default(true) @map("is_active")
+
+  student         Student   @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  course          Course    @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, courseId])
+  @@map("enrollments")
+}
+
+// ─── Payment: payment records with status tracking ──────────────────
+
+model Payment {
+  id                    Int           @id @default(autoincrement())
+  studentId             Int           @map("student_id")
+  amount                Int           // in UZS
+  currency              String        @default("UZS")
+  status                PaymentStatus @default(PENDING)
+  telegramPaymentId     String?       @unique @map("telegram_payment_id")
+  providerPaymentId     String?       @map("provider_payment_id")
+  paymentMonth          String        @map("payment_month") // e.g. "2026-07" (year-month)
+  description           String?
+  paidAt                DateTime?     @map("paid_at")
+  createdAt             DateTime      @default(now()) @map("created_at")
+  updatedAt             DateTime      @updatedAt @map("updated_at")
+
+  student               Student       @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@index([studentId, paymentMonth])
+  @@index([status])
+  @@map("payments")
+}

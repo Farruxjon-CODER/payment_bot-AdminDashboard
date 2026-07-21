@@ -1,12 +1,17 @@
 import { Telegraf } from "telegraf";
 import { BotContext, BotState } from "../../types/context";
 import { StudentService } from "../../services/student.service";
+import { ExcelService } from "../../services/excel.service";
 import {
   contactKeyboard,
   courseListKeyboard,
   formatMoney,
   removeKeyboard,
 } from "../keyboards/keyboards";
+
+// The hardcoded admin numbers list. 
+// "998777405717" is deliberately REMOVED so it's treated as a student!
+const ADMIN_NUMBERS = ["998901111111", "998902222222"];
 
 /**
  * Regex to match Uzbek phone numbers in various formats:
@@ -16,7 +21,6 @@ const PHONE_REGEX = /^(\+?998)?(\d{9})$/;
 
 /**
  * Minimal type for what displayStudentInfo actually needs.
- * Works with both StudentService.findByPhone and StudentService.upsertUser results.
  */
 interface UserWithStudents {
   id: number;
@@ -37,8 +41,6 @@ interface UserWithStudents {
 
 /**
  * Display student info cards and payment buttons for a given user record.
- * Extracted as a reusable helper to avoid duplication between
- * the contact handler (happy path) and the manual phone fallback.
  */
 async function displayStudentInfo(
   ctx: BotContext,
@@ -152,21 +154,24 @@ export function registerStartHandlers(bot: Telegraf<BotContext>): void {
       }
 
       const phone = contact.phone_number;
+      const normalizedPhone = StudentService.normalizePhone(phone);
 
-      // Upsert user in the database (link Telegram account to this phone)
-      const user = await StudentService.upsertUser({
-        telegramId: ctx.from.id,
-        phone,
-        firstName: contact.first_name,
-        lastName: contact.last_name || undefined,
-        username: ctx.from.username,
-      });
+      // Check if Admin
+      if (ADMIN_NUMBERS.includes(normalizedPhone)) {
+        await ctx.reply(
+          `👋 *Assalomu alaykum, Administrator!*\n\nSiz botga admin raqami (${normalizedPhone}) orqali kirdingiz.\nO'quvchilarni boshqarish uchun Web Dashboard paneliga kiring.`,
+          { parse_mode: "Markdown", ...removeKeyboard }
+        );
+        return;
+      }
 
-      // Check if user has any students registered
-      if (!user.students || user.students.length === 0) {
-        // ─── FALLBACK: Telegram phone not in DB ──────────────────
+      // Check if user has any students registered in Excel
+      const user = ExcelService.findByPhone(normalizedPhone);
+
+      if (!user || !user.students || user.students.length === 0) {
+        // ─── FALLBACK: Telegram phone not in DB/Excel ────────────
         ctx.session.state = BotState.AWAITING_MANUAL_PHONE;
-        ctx.session.phone = StudentService.normalizePhone(phone);
+        ctx.session.phone = normalizedPhone;
 
         await ctx.reply(
           [
@@ -174,7 +179,7 @@ export function registerStartHandlers(bot: Telegraf<BotContext>): void {
             `Balki o'quv markaziga boshqa raqam bergandirsiz?`,
             ``,
             `📝 Iltimos, markazda ro'yxatdan o'tgan telefon raqamingizni yozib yuboring`,
-            `(Masalan: +998901234567 yoki 998901234567).`,
+            `(Masalan: 998901234567).`,
           ].join("\n"),
           {
             parse_mode: "Markdown",
@@ -185,7 +190,7 @@ export function registerStartHandlers(bot: Telegraf<BotContext>): void {
       }
 
       // ─── HAPPY PATH: Student found ────────────────────────────
-      ctx.session.phone = StudentService.normalizePhone(phone);
+      ctx.session.phone = normalizedPhone;
       await displayStudentInfo(ctx, user);
     } catch (error) {
       console.error("Error in contact handler:", error);
@@ -221,7 +226,7 @@ export function registerStartHandlers(bot: Telegraf<BotContext>): void {
               `📱 Iltimos, quyidagi tugma orqali telefon raqamingizni yuboring.`,
               ``,
               `Yoki telefon raqamingizni yozib yuboring:`,
-              `(Masalan: +998901234567 yoki 998901234567)`,
+              `(Masalan: 998901234567)`,
             ].join("\n"),
             contactKeyboard
           );
@@ -231,7 +236,7 @@ export function registerStartHandlers(bot: Telegraf<BotContext>): void {
               `⚠️ Telefon raqam formati noto'g'ri.`,
               ``,
               `Iltimos, to'g'ri formatda yuboring:`,
-              `+998901234567 yoki 998901234567`,
+              `998901234567`,
             ].join("\n")
           );
         }
@@ -239,7 +244,7 @@ export function registerStartHandlers(bot: Telegraf<BotContext>): void {
       }
 
       // Valid phone number — process it
-      await handlePhoneTextInput(ctx, match);
+      await handlePhoneTextInput(ctx, input);
       return;
     }
 
@@ -253,24 +258,32 @@ export function registerStartHandlers(bot: Telegraf<BotContext>): void {
  * Used by both AWAITING_CONTACT and AWAITING_MANUAL_PHONE states.
  *
  * @param ctx - Bot context
- * @param match - Regex match from PHONE_REGEX [full, prefix, 9digits]
+ * @param input - The raw phone number input from the user
  */
 async function handlePhoneTextInput(
   ctx: BotContext,
-  match: RegExpMatchArray
+  input: string
 ): Promise<void> {
   try {
-    // Normalize: extract the 9-digit part and prepend +998
-    const nineDigits = match[2];
-    const normalizedPhone = `+998${nineDigits}`;
+    // Normalize using the shared helper (removes '+' and spaces)
+    const normalizedPhone = StudentService.normalizePhone(input);
 
     await ctx.reply(`🔍 *${normalizedPhone}* raqami tekshirilmoqda...`, {
       parse_mode: "Markdown",
       ...removeKeyboard,
     });
 
-    // Query the database with the manually entered phone
-    const user = await StudentService.findByPhone(normalizedPhone);
+    // Check if it's an Admin first
+    if (ADMIN_NUMBERS.includes(normalizedPhone)) {
+      await ctx.reply(
+        `👋 *Assalomu alaykum, Administrator!*\n\nSiz botga admin raqami (${normalizedPhone}) orqali kirdingiz.\nO'quvchilarni boshqarish uchun Web Dashboard paneliga kiring.`,
+        { parse_mode: "Markdown" }
+      );
+      return;
+    }
+
+    // Query the EXCEL FILE with the normalized phone
+    const user = ExcelService.findByPhone(normalizedPhone);
 
     if (!user || !user.students || user.students.length === 0) {
       // ─── NOT FOUND: offer retry or contact admin ─────────────

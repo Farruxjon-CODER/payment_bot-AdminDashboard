@@ -9,18 +9,15 @@ export class StudentService {
    * Handles various input formats from Telegram contact sharing.
    */
   static normalizePhone(phone: string): string {
-    // Remove all non-digit characters
+    // Remove all non-digit characters (including + and spaces)
     let digits = phone.replace(/\D/g, "");
 
-    // Handle Uzbek numbers
-    if (digits.startsWith("998")) {
-      return `+${digits}`;
-    }
+    // Handle Uzbek numbers if someone only sent 9 digits
     if (digits.length === 9) {
-      return `+998${digits}`;
+      return `998${digits}`;
     }
-    // Return with + prefix if not already present
-    return phone.startsWith("+") ? phone : `+${digits}`;
+    
+    return digits;
   }
 
   /**

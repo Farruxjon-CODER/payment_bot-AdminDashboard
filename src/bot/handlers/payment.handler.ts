@@ -92,7 +92,12 @@ export function registerPaymentHandlers(bot: Telegraf<BotContext>): void {
       });
 
       const title = `${course.name} — oylik to'lov`;
-      const description = `👤 O'quvchi: ${student.fullName}\n📚 Fan: ${course.name}\n👨‍🏫 O'qituvchi: ${course.teacherName}\n🗓 To'lov oyi: ${formatMonthName(currentMonth)}`;
+      const description = [
+        `👤 O'quvchi: ${student.fullName}`,
+        `📚 Fan: ${course.name}`,
+        `👨‍🏫 O'qituvchi: ${course.teacherName}`,
+        `🗓 To'lov oyi: ${formatMonthName(currentMonth)}`
+      ].join('\n');
 
       // Send invoice via Telegram Payments API
       await ctx.replyWithInvoice({

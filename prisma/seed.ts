@@ -10,6 +10,7 @@ async function seed(): Promise<void> {
   console.log("🌱 Seeding database...");
 
   // ─── Clear existing data ─────────────────────────────────────────
+  await prisma.admin.deleteMany();
   await prisma.payment.deleteMany();
   await prisma.enrollment.deleteMany();
   await prisma.student.deleteMany();
@@ -94,9 +95,20 @@ async function seed(): Promise<void> {
 
   console.log("  ✅ Enrollments created");
 
+  // ─── Create Admin ────────────────────────────────────────────────
+  const admin = await prisma.admin.create({
+    data: {
+      phone: "998777405717",
+      password: "12345678",
+    },
+  });
+
+  console.log("  ✅ Admin created");
+
   // ─── Summary ─────────────────────────────────────────────────────
   console.log("\n📋 Seed Summary:");
   console.log(`  📚 Courses: 3 (Matematika, Ingliz tili, Fizika)`);
+  console.log(`  🛡️ Admins: 1 (${admin.phone})`);
   console.log(`  👤 Users: 1 (${parentUser.firstName} ${parentUser.lastName})`);
   console.log(`  🧑‍🎓 Students: 2 (${student1.fullName}, ${student2.fullName})`);
   console.log(`  📝 Enrollments: 4`);

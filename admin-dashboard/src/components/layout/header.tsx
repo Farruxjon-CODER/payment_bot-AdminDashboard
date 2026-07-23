@@ -15,6 +15,9 @@ import { useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 
+import { GlobalSearch } from "@/components/GlobalSearch";
+import { ThemeToggle } from "@/components/ThemeToggle";
+
 function formatPhone(phone: string) {
   if (!phone || phone.length < 12) return phone;
   // formats 998901234567 to +998 90 123 45 67
@@ -30,23 +33,17 @@ export function Header({ adminPhone = "Admin" }: { adminPhone?: string }) {
   const router = useRouter();
 
   return (
-    <div className="flex h-16 items-center px-4 border-b bg-white">
+    <div className="flex h-16 items-center px-4 border-b bg-white dark:bg-slate-950 dark:border-slate-800">
       <Button variant="ghost" size="icon" className="md:hidden">
         <Menu className="h-5 w-5" />
       </Button>
       
       <div className="flex-1 flex items-center gap-4 md:ml-4">
-        <div className="relative w-full max-w-sm hidden md:flex">
-          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-          <Input
-            type="search"
-            placeholder="Global qidiruv..."
-            className="w-full bg-muted/50 pl-8 md:w-[300px] lg:w-[400px]"
-          />
-        </div>
+        <GlobalSearch />
       </div>
       
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-2">
+        <ThemeToggle />
         <Button variant="ghost" size="icon">
           <Bell className="h-5 w-5" />
         </Button>

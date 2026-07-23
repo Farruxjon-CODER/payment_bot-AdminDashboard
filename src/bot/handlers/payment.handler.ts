@@ -1,10 +1,11 @@
 import { Telegraf } from "telegraf";
-import { BotContext } from "../../types/context";
+import { BotContext, BotState } from "../../types/context";
 import { env } from "../../config/env";
 import { StudentService } from "../../services/student.service";
 import { PaymentService } from "../../services/payment.service";
 import { NotificationService } from "../../services/notification.service";
 import { formatMoney } from "../keyboards/keyboards";
+import { prisma } from "../../repositories/prisma.repository";
 
 /**
  * Uzbek month names for human-readable date display.
@@ -35,6 +36,65 @@ export function formatMonthName(yearMonth: string): string {
   return `${monthName}, ${yearStr}`;
 }
 
+export async function generateInvoice(ctx: BotContext, studentId: number, customAmount: number) {
+  try {
+    const student = await StudentService.getStudentById(studentId);
+    if (!student) {
+      await ctx.reply("❌ O'quvchi ma'lumotlari topilmadi.");
+      return;
+    }
+
+    const currentMonth = PaymentService.getCurrentYearMonth();
+    const courseName = student.groupName || "O'quv kursi";
+    const teacherName = student.teacher || "O'qituvchi";
+
+    // Create pending payment record with the custom amount
+    const payment = await PaymentService.createPendingPayment({
+      studentId: student.id,
+      amount: customAmount,
+      paymentMonth: currentMonth,
+      description: `${courseName} — qisman to'lov (${currentMonth})`,
+    });
+
+    // Build invoice payload
+    const payload = JSON.stringify({
+      paymentId: payment.id,
+      studentId: student.id,
+    });
+
+    const title = `${courseName} — to'lov`;
+    const description = [
+      `👤 O'quvchi: ${student.fullName}`,
+      `📚 Fan: ${courseName}`,
+      `👨‍🏫 O'qituvchi: ${teacherName}`,
+      `🗓 Oylar: ${formatMonthName(currentMonth)}`
+    ].join('\n');
+
+    // Send invoice via Telegram Payments API
+    await ctx.replyWithInvoice({
+      title,
+      description,
+      payload,
+      provider_token: env.PROVIDER_TOKEN,
+      currency: "UZS",
+      prices: [
+        {
+          label: `To'lov summasi`,
+          amount: customAmount * 100, // Telegram expects amount in smallest currency unit (tiyin)
+        },
+      ],
+      start_parameter: `pay_${student.id}`,
+      photo_url: undefined,
+      need_phone_number: false,
+      need_name: false,
+    });
+
+  } catch (error) {
+    console.error("Error generating custom invoice:", error);
+    await ctx.reply("❌ To'lov chiqarishda xatolik yuz berdi. Qaytadan urinib ko'ring.");
+  }
+}
+
 /**
  * Register payment-related handlers:
  * - Inline button callback for initiating payment
@@ -47,82 +107,34 @@ export function registerPaymentHandlers(bot: Telegraf<BotContext>): void {
   // ─── "To'lov qilish" button callback ────────────────────────────
   bot.action(/^pay_(\d+)$/, async (ctx) => {
     try {
-      const enrollmentId = parseInt(ctx.match[1], 10);
+      const studentId = parseInt(ctx.match[1], 10);
 
-      // Get enrollment details
-      const enrollment = await StudentService.getEnrollment(enrollmentId);
-      if (!enrollment) {
-        await ctx.answerCbQuery("❌ Kurs ma'lumotlari topilmadi.", {
+      // Get student details
+      const student = await StudentService.getStudentById(studentId);
+      if (!student) {
+        await ctx.answerCbQuery("❌ O'quvchi topilmadi.", {
           show_alert: true,
         });
         return;
       }
 
-      const { student, course } = enrollment;
-      const currentMonth = PaymentService.getCurrentYearMonth();
+      // Check if already paid for this month (optional, maybe skip if partial payments are allowed?)
+      // Let's allow partial payments without checking for a strict full month lock.
 
-      // Check if already paid for this month
-      const alreadyPaid = await PaymentService.hasStudentPaidForMonth(
-        student.id,
-        currentMonth
+      // Transition state
+      ctx.session.state = BotState.AWAITING_PAYMENT_AMOUNT;
+      ctx.session.studentId = student.id;
+
+      await ctx.reply(
+        "💬 Qancha to'lamoqchisiz? Iltimos, summani faqat raqamlarda kiriting:\n\n(Masalan: 200000)",
+        { parse_mode: "Markdown" }
       );
-
-      if (alreadyPaid) {
-        await ctx.answerCbQuery(
-          `✅ ${student.fullName} — ${course.name} uchun bu oylik to'lov allaqachon amalga oshirilgan.`,
-          { show_alert: true }
-        );
-        return;
-      }
-
-      // Create pending payment record
-      const payment = await PaymentService.createPendingPayment({
-        studentId: student.id,
-        amount: course.monthlyFee,
-        paymentMonth: currentMonth,
-        description: `${course.name} — ${currentMonth}`,
-      });
-
-      // Build invoice payload (contains IDs for post-payment processing)
-      const payload = JSON.stringify({
-        paymentId: payment.id,
-        studentId: student.id,
-        enrollmentId: enrollment.id,
-        courseId: course.id,
-      });
-
-      const title = `${course.name} — oylik to'lov`;
-      const description = [
-        `👤 O'quvchi: ${student.fullName}`,
-        `📚 Fan: ${course.name}`,
-        `👨‍🏫 O'qituvchi: ${course.teacherName}`,
-        `🗓 To'lov oyi: ${formatMonthName(currentMonth)}`
-      ].join('\n');
-
-      // Send invoice via Telegram Payments API
-      await ctx.replyWithInvoice({
-        title,
-        description,
-        payload,
-        provider_token: env.PROVIDER_TOKEN,
-        currency: "UZS",
-        prices: [
-          {
-            label: `${course.name} (${currentMonth})`,
-            amount: course.monthlyFee * 100, // Telegram expects amount in smallest currency unit
-          },
-        ],
-        start_parameter: `pay_${enrollmentId}`,
-        photo_url: undefined,
-        need_phone_number: false,
-        need_name: false,
-      });
 
       await ctx.answerCbQuery();
     } catch (error) {
-      console.error("Error creating payment invoice:", error);
+      console.error("Error initiating payment:", error);
       await ctx.answerCbQuery(
-        "❌ To'lov chiqarishda xatolik yuz berdi. Qaytadan urinib ko'ring.",
+        "❌ Xatolik yuz berdi. Qaytadan urinib ko'ring.",
         { show_alert: true }
       );
     }
@@ -148,14 +160,12 @@ export function registerPaymentHandlers(bot: Telegraf<BotContext>): void {
         return;
       }
 
-      // Verify the enrollment still exists and is active
-      const enrollment = await StudentService.getEnrollment(
-        payload.enrollmentId
-      );
-      if (!enrollment || !enrollment.isActive) {
+      // Verify the student still exists
+      const student = await StudentService.getStudentById(payload.studentId);
+      if (!student) {
         await ctx.answerPreCheckoutQuery(
           false,
-          "❌ Kurs ro'yxatdan o'tkazilmagan yoki faol emas."
+          "❌ O'quvchi topilmadi."
         );
         return;
       }
@@ -175,51 +185,110 @@ export function registerPaymentHandlers(bot: Telegraf<BotContext>): void {
   bot.on("successful_payment", async (ctx) => {
     try {
       const payment = ctx.message.successful_payment;
-
-      // Parse the payload
       const payload = JSON.parse(payment.invoice_payload);
 
-      // Confirm payment in the database
+      // 1. Convert Telegram API total_amount (kopecks/tiyin) to real UZS
+      const paidAmount = payment.total_amount / 100;
+
+      // 2. Fetch Current Balance from Prisma
+      const student = await prisma.student.findUnique({ 
+        where: { id: payload.studentId } 
+      });
+
+      if (!student) {
+        throw new Error("Student not found during successful_payment processing");
+      }
+
+      // Fetch the student's Group to get the monthlyFee
+      const groupName = student.groupName || "";
+      const group = await prisma.group.findUnique({
+        where: { name: groupName }
+      });
+
+      // @ts-ignore
+      const baseFee = group?.monthlyFee || 0;
+
+      // 3. Dynamically Calculate New Debt
+      // Since the new payment is NOT confirmed in the DB yet, we fetch prior paid sums and manually add `paidAmount`.
+      const priorPayments = await prisma.payment.aggregate({
+        _sum: { amount: true },
+        where: {
+          studentId: student.id,
+          status: "PAID",
+          paymentMonth: payload.paymentMonth // Ensure it matches the month of the invoice
+        }
+      });
+      const totalPaidSoFar = (priorPayments._sum.amount || 0) + paidAmount;
+
+      let newDebt = baseFee - totalPaidSoFar;
+      if (newDebt < 0) newDebt = 0;
+
+      // 4. Update the Database persistently with this newDebt
+      await prisma.student.update({ 
+        where: { id: student.id }, 
+        data: { studentBalance: newDebt } 
+      });
+
+      // Confirm payment in the database (status = PAID)
       const confirmedPayment = await PaymentService.confirmPayment({
         paymentId: payload.paymentId,
         telegramPaymentId: payment.telegram_payment_charge_id,
         providerPaymentId: payment.provider_payment_charge_id,
       });
-
-      const student = confirmedPayment.student;
-      const courseName =
-        student.enrollments.find(
-          (e) => e.courseId === payload.courseId
-        )?.course.name || "Noma'lum fan";
-
-      const teacherName =
-        student.enrollments.find(
-          (e) => e.courseId === payload.courseId
-        )?.course.teacherName || "";
-
+      
+      const courseName = student.groupName || "Noma'lum fan";
+      const teacherName = student.teacher || "";
       const paidAt = confirmedPayment.paidAt || new Date();
+      
+      const formattedPaidAt = `${paidAt.toLocaleDateString('uz-UZ')} ${paidAt.toLocaleTimeString('uz-UZ')}`;
+      const receiptId = `PAY-${confirmedPayment.id.toString().padStart(6, '0')}`;
 
-      // 1. Send receipt to user
-      await notificationService.sendReceipt(ctx.chat.id, {
-        studentName: student.fullName,
-        courseName,
-        amount: confirmedPayment.amount,
-        paymentMonth: confirmedPayment.paymentMonth,
-        paidAt,
-      });
+      // 5. Render the Output with newDebt dynamically
+      const receiptMessage = [
+        `✅ <b>To'lov muvaffaqiyatli qabul qilindi!</b>`,
+        ``,
+        `🧾 <b>Kvitansiya:</b> #${receiptId}`,
+        `👤 <b>O'quvchi:</b> ${student.fullName}`,
+        `📚 <b>Guruh:</b> ${courseName}`,
+        ``,
+        `💰 <b>To'langan summa:</b> ${formatMoney(paidAmount)} UZS`,
+        `📉 <b>Qolgan qarzdorlik:</b> ${formatMoney(newDebt)} UZS`,
+        ``,
+        `📅 <b>Sana:</b> ${formattedPaidAt}`,
+        `<i>O'quv markazimizni tanlaganingiz uchun tashakkur!</i>`
+      ].join('\n');
 
-      // 2. Notify admin in real-time
-      await notificationService.notifyAdmin({
-        studentName: student.fullName,
-        courseName,
-        teacherName,
-        amount: confirmedPayment.amount,
-        paymentMonth: confirmedPayment.paymentMonth,
-        paidAt,
-      });
+      await ctx.reply(receiptMessage, { parse_mode: "HTML" });
+
+      // Notify admin in real-time
+      const adminMessage = [
+        `🔔 <b>Yangi to'lov qabul qilindi!</b>`,
+        ``,
+        `🧾 <b>Kvitansiya:</b> #${receiptId}`,
+        `👤 <b>O'quvchi:</b> ${student.fullName}`,
+        `📚 <b>Guruh:</b> ${courseName}`,
+        `👨‍🏫 <b>O'qituvchi:</b> ${teacherName}`,
+        ``,
+        `💰 <b>To'langan summa:</b> ${formatMoney(paidAmount)} UZS`,
+        `📉 <b>Qolgan qarzdorlik:</b> ${formatMoney(newDebt)} UZS`,
+        ``,
+        `📅 <b>Sana:</b> ${formattedPaidAt}`
+      ].join('\n');
+
+      const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID;
+      if (ADMIN_CHAT_ID) {
+        const adminIds = ADMIN_CHAT_ID.split(',').map(id => id.trim());
+        for (const adminId of adminIds) {
+          try {
+            await ctx.telegram.sendMessage(adminId, adminMessage, { parse_mode: "HTML" });
+          } catch (e) {
+            console.error(`Failed to notify admin ${adminId}:`, e);
+          }
+        }
+      }
 
       console.log(
-        `✅ Payment confirmed: ${student.fullName} — ${courseName} — ${formatMoney(confirmedPayment.amount)} UZS`
+        `✅ Payment confirmed: ${student.fullName} — ${courseName} — ${formatMoney(paidAmount)} UZS`
       );
     } catch (error) {
       console.error("Error processing successful payment:", error);

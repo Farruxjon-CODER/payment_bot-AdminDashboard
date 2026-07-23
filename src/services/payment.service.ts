@@ -44,14 +44,7 @@ export class PaymentService {
         paidAt: new Date(),
       },
       include: {
-        student: {
-          include: {
-            user: true,
-            enrollments: {
-              include: { course: true },
-            },
-          },
-        },
+        student: true, // Flat schema: no enrollments or user relation
       },
     });
   }

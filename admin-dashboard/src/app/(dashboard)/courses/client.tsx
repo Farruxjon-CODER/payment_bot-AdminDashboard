@@ -1,73 +1,237 @@
 "use client";
 
-import { BookOpen, Users, Clock, Pencil } from "lucide-react";
-import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { useState, useTransition, useEffect } from "react";
+import { Edit, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { CourseForm } from "./course-form";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { toast } from "sonner";
+import { updateGroup } from "./actions";
 
-type CourseData = {
+type GroupData = {
   id: number;
   name: string;
-  teacherName: string;
-  schedule: string;
+  teacher: string | null;
+  startTime: string | null;
+  endTime: string | null;
   monthlyFee: number;
-  isActive: boolean;
+  status: string | null;
 };
 
-export function CoursesGrid({ courses }: { courses: CourseData[] }) {
-  return (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-      {courses.map((course) => (
-        <Card key={course.id} className="hover:shadow-md transition-shadow">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-xl font-bold">{course.name}</CardTitle>
-            <BookOpen className="h-5 w-5 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-3 mt-4">
-              <div className="flex items-center text-sm">
-                <Users className="mr-2 h-4 w-4 text-primary" />
-                <span className="font-medium">{course.teacherName}</span>
-              </div>
-              <div className="flex items-center text-sm text-muted-foreground">
-                <Clock className="mr-2 h-4 w-4" />
-                {course.schedule}
-              </div>
-              <div className="pt-4 border-t mt-4 flex items-center justify-between">
-                <span className="text-sm text-muted-foreground">Oylik to'lov:</span>
-                <span className="text-lg font-bold text-primary">
-                  {new Intl.NumberFormat("uz-UZ").format(course.monthlyFee)} UZS
-                </span>
-              </div>
-            </div>
-          </CardContent>
-          <CardFooter>
-            <CourseForm
-              mode="edit"
-              course={course}
-              trigger={
-                <Button variant="outline" className="w-full">
-                  <Pencil className="h-4 w-4 mr-2" /> Tahrirlash
-                </Button>
-              }
-            />
-          </CardFooter>
-        </Card>
-      ))}
+type GroupFormModalProps = {
+  group: GroupData;
+  trigger: React.ReactNode;
+};
 
-      {/* Add new course card — wired to the Create modal */}
-      <CourseForm
-        mode="create"
-        trigger={
-          <Card className="hover:shadow-md transition-shadow border-dashed flex flex-col items-center justify-center p-6 text-muted-foreground cursor-pointer hover:bg-slate-50 min-h-[250px]">
-            <div className="rounded-full bg-slate-100 p-4 mb-4">
-              <BookOpen className="h-8 w-8" />
-            </div>
-            <h3 className="font-semibold text-lg">Yangi kurs qo&apos;shish</h3>
-            <p className="text-sm text-center mt-1">Yangi fan va o&apos;qituvchini tizimga kiritish</p>
-          </Card>
-        }
-      />
+export function GroupFormModal({ group, trigger }: GroupFormModalProps) {
+  const [open, setOpen] = useState(false);
+  const [isPending, startTransition] = useTransition();
+
+  const [name, setName] = useState(group?.name ?? "");
+  const [teacher, setTeacher] = useState(group?.teacher ?? "");
+  const [startTime, setStartTime] = useState(group?.startTime ?? "");
+  const [endTime, setEndTime] = useState(group?.endTime ?? "");
+  const [monthlyFee, setMonthlyFee] = useState(
+    group?.monthlyFee?.toString() ?? "0"
+  );
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+
+    const data = {
+      name,
+      teacher,
+      startTime,
+      endTime,
+      monthlyFee: parseInt(monthlyFee, 10) || 0,
+    };
+
+    startTransition(async () => {
+      try {
+        await updateGroup(group.id, data);
+        toast.success("Guruh ma'lumotlari yangilandi!");
+        setOpen(false);
+      } catch (error) {
+        toast.error("Xatolik yuz berdi! Iltimos qaytadan urinib ko'ring.");
+        console.error(error);
+      }
+    });
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>{trigger}</DialogTrigger>
+      <DialogContent className="sm:max-w-120">
+        <DialogHeader>
+          <DialogTitle>Guruhni tahrirlash</DialogTitle>
+          <DialogDescription>
+            "{group.name}" guruhi ma'lumotlarini tahrirlash.
+          </DialogDescription>
+        </DialogHeader>
+
+        <form onSubmit={handleSubmit} className="grid gap-4 py-4">
+          <div className="grid grid-cols-4 items-center gap-4">
+            <Label htmlFor="name" className="text-right">
+              Guruh nomi
+            </Label>
+            <Input
+              id="name"
+              placeholder="IELTS 01..."
+              className="col-span-3"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              required
+              readOnly
+              disabled
+            />
+          </div>
+
+          <div className="grid grid-cols-4 items-center gap-4">
+            <Label htmlFor="teacher" className="text-right">
+              O'qituvchi
+            </Label>
+            <Input
+              id="teacher"
+              placeholder="Ism Familiya"
+              className="col-span-3"
+              value={teacher}
+              onChange={(e) => setTeacher(e.target.value)}
+              required
+            />
+          </div>
+
+          <div className="grid grid-cols-4 items-center gap-4">
+            <Label htmlFor="startTime" className="text-right">
+              Boshlanish vaqti
+            </Label>
+            <Input
+              id="startTime"
+              placeholder="14:00"
+              className="col-span-3"
+              value={startTime}
+              onChange={(e) => setStartTime(e.target.value)}
+            />
+          </div>
+
+          <div className="grid grid-cols-4 items-center gap-4">
+            <Label htmlFor="endTime" className="text-right">
+              Tugash vaqti
+            </Label>
+            <Input
+              id="endTime"
+              placeholder="15:30"
+              className="col-span-3"
+              value={endTime}
+              onChange={(e) => setEndTime(e.target.value)}
+            />
+          </div>
+
+          <div className="grid grid-cols-4 items-center gap-4">
+            <Label htmlFor="monthlyFee" className="text-right">
+              Oylik to'lov
+            </Label>
+            <Input
+              id="monthlyFee"
+              type="number"
+              placeholder="0"
+              className="col-span-3"
+              value={monthlyFee}
+              onChange={(e) => setMonthlyFee(e.target.value)}
+              required
+            />
+          </div>
+
+          <DialogFooter>
+            <Button type="submit" disabled={isPending}>
+              {isPending ? "Saqlanmoqda..." : "Saqlash"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+export function GroupTable({ groups }: { groups: GroupData[] }) {
+  const [isMounted, setIsMounted] = useState(false);
+
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
+
+  if (!isMounted) {
+    return null; // Return null on first server-render to prevent Intl.NumberFormat mismatch
+  }
+
+  return (
+
+    <div className="space-y-4">
+      <div className="rounded-md border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Guruh / Fan</TableHead>
+              <TableHead>O'qituvchi</TableHead>
+              <TableHead>Vaqti</TableHead>
+              <TableHead>Oylik To'lov</TableHead>
+              <TableHead className="text-right">Harakatlar</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {groups.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
+                  Guruhlar topilmadi.
+                </TableCell>
+              </TableRow>
+            ) : (
+              groups.map((group) => (
+                <TableRow key={group.id}>
+                  <TableCell className="font-medium text-slate-900 dark:text-slate-100">{group.name}</TableCell>
+                  <TableCell className="text-slate-500 dark:text-slate-400">{group.teacher || "Noma'lum"}</TableCell>
+                  <TableCell className="text-slate-500 dark:text-slate-400">
+                    {group.startTime && group.endTime 
+                      ? `${group.startTime} - ${group.endTime}`
+                      : group.startTime || group.endTime || "Vaqt belgilanmagan"}
+                  </TableCell>
+                  <TableCell className="text-slate-900 dark:text-slate-100 font-medium">
+                    {group.monthlyFee === 0 
+                      ? <span className="text-slate-400 italic">Narx belgilanmagan</span> 
+                      : `${new Intl.NumberFormat("uz-UZ").format(group.monthlyFee)} UZS`}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <GroupFormModal
+                      group={group}
+                      trigger={
+                        <Button variant="ghost" size="icon">
+                          <Edit className="h-4 w-4" />
+                        </Button>
+                      }
+                    />
+                  </TableCell>
+                </TableRow>
+              ))
+            )}
+          </TableBody>
+        </Table>
+      </div>
     </div>
   );
 }

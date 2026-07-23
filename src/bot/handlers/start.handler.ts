@@ -1,7 +1,8 @@
-import { Telegraf } from "telegraf";
+import { Telegraf, Markup } from "telegraf";
 import { BotContext, BotState } from "../../types/context";
 import { StudentService } from "../../services/student.service";
-import { ExcelService } from "../../services/excel.service";
+import { generateInvoice } from "./payment.handler";
+import { prisma } from "../../repositories/prisma.repository";
 import {
   contactKeyboard,
   courseListKeyboard,
@@ -10,7 +11,6 @@ import {
 } from "../keyboards/keyboards";
 
 // The hardcoded admin numbers list. 
-// "998777405717" is deliberately REMOVED so it's treated as a student!
 const ADMIN_NUMBERS = ["998901111111", "998902222222"];
 
 /**
@@ -22,21 +22,14 @@ const PHONE_REGEX = /^(\+?998)?(\d{9})$/;
 /**
  * Minimal type for what displayStudentInfo actually needs.
  */
-interface UserWithStudents {
+interface FlatStudent {
   id: number;
-  students: Array<{
-    id: number;
-    fullName: string;
-    enrollments: Array<{
-      id: number;
-      course: {
-        name: string;
-        teacherName: string;
-        schedule: string;
-        monthlyFee: number;
-      };
-    }>;
-  }>;
+  fullName: string;
+  groupName: string | null;
+  teacher: string | null;
+  classTime: string | null;
+  groupBalance: number | null;
+  studentBalance: number | null;
 }
 
 /**
@@ -44,66 +37,78 @@ interface UserWithStudents {
  */
 async function displayStudentInfo(
   ctx: BotContext,
-  user: UserWithStudents
+  student: FlatStudent
 ): Promise<void> {
-  if (!user || !user.students || user.students.length === 0) {
+  if (!student) {
     return;
   }
 
   // Store session data
   ctx.session.state = BotState.IDENTIFIED;
-  ctx.session.userId = user.id;
+  ctx.session.userId = student.id; // Map to student.id since user relation is flattened
+  ctx.session.studentId = student.id;
 
-  for (const student of user.students) {
-    ctx.session.studentId = student.id;
-
-    if (student.enrollments.length === 0) {
-      await ctx.reply(
-        `👤 *${student.fullName}* — hech qanday kursga yozilmagan.`,
-        {
-          parse_mode: "Markdown",
-          ...removeKeyboard,
-        }
-      );
-      continue;
-    }
-
-    // Build student info card
-    const infoLines = [
-      `👤 *O'quvchi:* ${student.fullName}`,
-      ``,
-    ];
-
-    for (const enrollment of student.enrollments) {
-      const course = enrollment.course;
-      infoLines.push(
-        `📚 *Fan:* ${course.name}`,
-        `👨‍🏫 *O'qituvchi:* ${course.teacherName}`,
-        `🕐 *Dars jadvali:* ${course.schedule}`,
-        `💰 *Oylik to'lov:* ${formatMoney(course.monthlyFee)} so'm`,
-        `─────────────────────`
-      );
-    }
-
-    infoLines.push(
-      ``,
-      `To'lov amalga oshirish uchun quyidagi tugmani bosing:`
-    );
-
-    await ctx.reply(infoLines.join("\n"), {
-      parse_mode: "Markdown",
-      ...removeKeyboard,
+  // Fetch the Group to get the exact monthlyFee
+  let baseFee = 0;
+  if (student.groupName) {
+    const group = await prisma.group.findUnique({
+      where: { name: student.groupName },
     });
-
-    // Show payment buttons for each enrollment
-    await ctx.reply(
-      "💳 *Qaysi fan uchun to'lov qilmoqchisiz?*",
-      {
-        parse_mode: "Markdown",
-        ...courseListKeyboard(student.enrollments),
-      }
-    );
+    if (group && group.monthlyFee !== null) {
+      baseFee = group.monthlyFee;
+    }
   }
+
+  // Get current month based on the backend service
+  const now = new Date();
+  const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+
+  // Dynamically calculate total paid for the current month
+  const paymentsThisMonth = await prisma.payment.aggregate({
+    _sum: { amount: true },
+    where: {
+      studentId: student.id,
+      status: "PAID",
+      paymentMonth: currentMonth
+    }
+  });
+
+  const totalPaid = paymentsThisMonth._sum.amount || 0;
+  
+  // Real debt is Course Fee minus Total Paid This Month
+  let currentDebt = baseFee - totalPaid;
+  if (currentDebt < 0) currentDebt = 0;
+
+  // Build student info card
+  const infoLines = [
+    `👤 *O'quvchi:* ${student.fullName}`,
+    ``,
+    `📚 *Fan (Guruh):* ${student.groupName || "Noma'lum"}`,
+    `👨‍🏫 *O'qituvchi:* ${student.teacher || "Noma'lum"}`,
+    `🕐 *Dars jadvali:* ${student.classTime || "Noma'lum"}`,
+    `📉 *Sizning qarzdorligingiz:* ${formatMoney(currentDebt)} so'm`,
+    `─────────────────────`,
+    ``,
+    `To'lov amalga oshirish uchun quyidagi tugmani bosing:`
+  ];
+
+  await ctx.reply(infoLines.join("\n"), {
+    parse_mode: "Markdown",
+    ...removeKeyboard,
+  });
+
+  // Directly build the payment button without relying on old enrollment structures
+  const buttonText = `💳 ${student.groupName || "To'lov"} — ${formatMoney(currentDebt)} so'm`;
+  
+  await ctx.reply(
+    "💳 *To'lov qilish*",
+    {
+      parse_mode: "Markdown",
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback(buttonText, `pay_${student.id}`)]
+      ])
+    }
+  );
 }
 
 /**
@@ -156,7 +161,7 @@ export function registerStartHandlers(bot: Telegraf<BotContext>): void {
       const phone = contact.phone_number;
       const normalizedPhone = StudentService.normalizePhone(phone);
 
-      // Check if Admin
+      // ONLY the 2 numbers in the array get treated as Admin
       if (ADMIN_NUMBERS.includes(normalizedPhone)) {
         await ctx.reply(
           `👋 *Assalomu alaykum, Administrator!*\n\nSiz botga admin raqami (${normalizedPhone}) orqali kirdingiz.\nO'quvchilarni boshqarish uchun Web Dashboard paneliga kiring.`,
@@ -165,11 +170,18 @@ export function registerStartHandlers(bot: Telegraf<BotContext>): void {
         return;
       }
 
-      // Check if user has any students registered in Excel
-      const user = ExcelService.findByPhone(normalizedPhone);
+      // Upsert user in the database (link Telegram account to this phone)
+      const student = await StudentService.upsertUser({
+        telegramId: ctx.from.id,
+        phone: normalizedPhone,
+        firstName: contact.first_name,
+        lastName: contact.last_name || undefined,
+        username: ctx.from.username,
+      });
 
-      if (!user || !user.students || user.students.length === 0) {
-        // ─── FALLBACK: Telegram phone not in DB/Excel ────────────
+      // Check if student was found in the database
+      if (!student) {
+        // ─── FALLBACK: Telegram phone not in DB ──────────────────
         ctx.session.state = BotState.AWAITING_MANUAL_PHONE;
         ctx.session.phone = normalizedPhone;
 
@@ -191,7 +203,7 @@ export function registerStartHandlers(bot: Telegraf<BotContext>): void {
 
       // ─── HAPPY PATH: Student found ────────────────────────────
       ctx.session.phone = normalizedPhone;
-      await displayStudentInfo(ctx, user);
+      await displayStudentInfo(ctx, student);
     } catch (error) {
       console.error("Error in contact handler:", error);
       await ctx.reply(
@@ -208,6 +220,33 @@ export function registerStartHandlers(bot: Telegraf<BotContext>): void {
     // Skip commands (e.g. /start, /help) — let Telegraf route them normally
     if (input.startsWith("/")) {
       return next();
+    }
+
+    // -- State: Awaiting payment amount ──────────────────────────────
+    if (ctx.session.state === BotState.AWAITING_PAYMENT_AMOUNT) {
+      // Remove all non-digit characters from the input (handles spaces, commas, etc)
+      const amountStr = input.replace(/\D/g, "");
+      const amount = parseInt(amountStr, 10);
+
+      if (isNaN(amount) || amount < 5000) {
+        await ctx.reply(
+          "⚠️ To'lov summasi noto'g'ri. Iltimos, kamida 5000 so'm kiriting:\n\n(Masalan: 200000)"
+        );
+        return;
+      }
+
+      const studentId = ctx.session.studentId;
+      if (!studentId) {
+        await ctx.reply("❌ O'quvchi ma'lumotlari topilmadi. Iltimos, /start buyrug'ini bosing.");
+        return;
+      }
+
+      // Generate the invoice using the user-provided amount
+      await generateInvoice(ctx, studentId, amount);
+
+      // Reset state to IDENTIFIED to allow other generic commands but keep student context
+      ctx.session.state = BotState.IDENTIFIED;
+      return;
     }
 
     // -- State: Awaiting contact OR manual phone ────────────────────
@@ -282,10 +321,10 @@ async function handlePhoneTextInput(
       return;
     }
 
-    // Query the EXCEL FILE with the normalized phone
-    const user = ExcelService.findByPhone(normalizedPhone);
+    // Query the DATABASE with the normalized phone
+    const student = await StudentService.findByPhone(normalizedPhone);
 
-    if (!user || !user.students || user.students.length === 0) {
+    if (!student) {
       // ─── NOT FOUND: offer retry or contact admin ─────────────
       ctx.session.state = BotState.AWAITING_MANUAL_PHONE;
 
@@ -309,7 +348,7 @@ async function handlePhoneTextInput(
 
     // ─── FOUND: show student data ────────────────────────────────
     ctx.session.phone = normalizedPhone;
-    await displayStudentInfo(ctx, user);
+    await displayStudentInfo(ctx, student);
   } catch (error) {
     console.error("Error in phone text handler:", error);
     await ctx.reply(

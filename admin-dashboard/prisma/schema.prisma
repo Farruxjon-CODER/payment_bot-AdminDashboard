@@ -31,59 +31,53 @@ model User {
   registeredAt    DateTime  @default(now()) @map("registered_at")
   updatedAt       DateTime  @updatedAt @map("updated_at")
 
-  students        Student[]
-
   @@map("users")
 }
 
-// ─── Student: child/student profile ─────────────────────────────────
+// ─── Group: Class / Group profile ───────────────────────────────────
+
+model Group {
+  id              Int       @id @default(autoincrement())
+  name            String    @unique
+  course          String?
+  teacher         String?
+  branch          String?
+  room            String?
+  startTime       String?   @map("start_time")
+  endTime         String?   @map("end_time")
+  startDate       DateTime? @map("start_date")
+  endDate         DateTime? @map("end_date")
+  activeStudents  Int       @default(0) @map("active_students")
+  monthlyFee      Float     @default(550000) @map("monthly_fee")
+  status          String?
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  @@map("groups")
+}
+
+// ─── Student: Flat student profile matching Excel ───────────────────
 
 model Student {
-  id              Int           @id @default(autoincrement())
-  fullName        String        @map("full_name")
-  userId          Int           @map("user_id")
-  createdAt       DateTime      @default(now()) @map("created_at")
-  updatedAt       DateTime      @updatedAt @map("updated_at")
+  id              Int       @id @default(autoincrement())
+  excelId         Int?      @map("excel_id")
+  fullName        String    @map("full_name")
+  score           Float?
+  phone           String    @unique
+  note            String?
+  groupName       String?   @map("group_name")
+  classTime       String?   @map("class_time")
+  teacher         String?
+  nextPaymentInfo String?   @map("next_payment_info")
+  groupBalance    Float?    @map("group_balance")
+  studentBalance  Float?    @map("student_balance")
+  status          String?
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
 
-  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  enrollments     Enrollment[]
   payments        Payment[]
 
   @@map("students")
-}
-
-// ─── Course: subject with teacher and schedule ──────────────────────
-
-model Course {
-  id              Int           @id @default(autoincrement())
-  name            String
-  teacherName     String        @map("teacher_name")
-  schedule        String        // e.g. "Dush-Chor-Juma 14:00-15:30"
-  monthlyFee      Int           @map("monthly_fee") // in UZS (tiyin = smallest unit)
-  description     String?
-  isActive        Boolean       @default(true) @map("is_active")
-  createdAt       DateTime      @default(now()) @map("created_at")
-  updatedAt       DateTime      @updatedAt @map("updated_at")
-
-  enrollments     Enrollment[]
-
-  @@map("courses")
-}
-
-// ─── Enrollment: many-to-many Student ↔ Course ──────────────────────
-
-model Enrollment {
-  id              Int       @id @default(autoincrement())
-  studentId       Int       @map("student_id")
-  courseId         Int       @map("course_id")
-  enrolledAt      DateTime  @default(now()) @map("enrolled_at")
-  isActive        Boolean   @default(true) @map("is_active")
-
-  student         Student   @relation(fields: [studentId], references: [id], onDelete: Cascade)
-  course          Course    @relation(fields: [courseId], references: [id], onDelete: Cascade)
-
-  @@unique([studentId, courseId])
-  @@map("enrollments")
 }
 
 // ─── Payment: payment records with status tracking ──────────────────

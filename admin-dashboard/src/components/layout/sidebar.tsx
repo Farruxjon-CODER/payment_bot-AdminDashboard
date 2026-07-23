@@ -1,6 +1,9 @@
 "use client";
 
+import { useState } from "react";
+
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { LayoutDashboard, Users, BookOpen, CreditCard, UserCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -40,15 +43,32 @@ const routes = [
 
 export function Sidebar() {
   const pathname = usePathname();
+  const [imgError, setImgError] = useState(false);
 
   return (
     <div className="space-y-4 py-4 flex flex-col h-full bg-[#111827] text-white">
       <div className="px-3 py-2 flex-1">
-        <Link href="/" className="flex items-center pl-3 mb-14">
-          <div className="relative w-8 h-8 mr-4 bg-white rounded-full flex items-center justify-center">
-            <span className="text-black font-bold text-xl">E</span>
+        <Link href="/" className="flex items-center pl-3 mb-14 gap-3">
+          {!imgError ? (
+            /* Using a standard <img> tag instead of next/image to prevent server crashes 
+               if the logo file doesn't exist in the public directory yet */
+            <img 
+              src="/logo.jpg" 
+              alt="OFEDU Logo" 
+              width={40} 
+              height={40} 
+              className="rounded-lg object-cover bg-white/10"
+              onError={() => setImgError(true)}
+            />
+          ) : (
+            <div className="w-10 h-10 bg-indigo-600 rounded-lg flex items-center justify-center text-white font-bold text-xl">
+              O
+            </div>
+          )}
+          <div>
+            <h1 className="text-2xl font-bold leading-tight">OFEDU Admin</h1>
+            <p className="text-xs text-zinc-400 font-medium">Learning Centre</p>
           </div>
-          <h1 className="text-2xl font-bold">EduCRM Admin</h1>
         </Link>
         <div className="space-y-1">
           {routes.map((route) => (

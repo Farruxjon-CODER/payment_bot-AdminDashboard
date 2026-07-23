@@ -3,40 +3,43 @@
 import { db } from "@/lib/db";
 import { revalidatePath } from "next/cache";
 
-// ─── Create Course ────────────────────────────────────────────────────
-export async function createCourse(data: {
+// ─── Create Group ────────────────────────────────────────────────────
+export async function createGroup(data: {
   name: string;
-  teacherName: string;
-  schedule: string;
+  teacher: string;
+  startTime: string;
+  endTime: string;
   monthlyFee: number;
 }) {
-  await db.course.create({
+  await db.group.create({
     data: {
       name: data.name,
-      teacherName: data.teacherName,
-      schedule: data.schedule,
+      teacher: data.teacher,
+      startTime: data.startTime || null,
+      endTime: data.endTime || null,
       monthlyFee: data.monthlyFee,
+      status: "Active",
     },
   });
   revalidatePath("/courses");
 }
 
-// ─── Update Course ────────────────────────────────────────────────────
-export async function updateCourse(
+// ─── Update Group ────────────────────────────────────────────────────
+export async function updateGroup(
   id: number,
   data: {
-    name: string;
-    teacherName: string;
-    schedule: string;
     monthlyFee: number;
+    teacher: string;
+    startTime: string;
+    endTime: string;
   }
 ) {
-  await db.course.update({
+  await db.group.update({
     where: { id },
     data: {
-      name: data.name,
-      teacherName: data.teacherName,
-      schedule: data.schedule,
+      teacher: data.teacher,
+      startTime: data.startTime || null,
+      endTime: data.endTime || null,
       monthlyFee: data.monthlyFee,
     },
   });

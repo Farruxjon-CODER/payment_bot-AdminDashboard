@@ -5,7 +5,7 @@ import { prisma } from "../repositories/prisma.repository";
  */
 export class StudentService {
   /**
-   * Normalize phone number to +998XXXXXXXXX format.
+   * Normalize phone number to 998XXXXXXXXX format.
    * Handles various input formats from Telegram contact sharing.
    */
   static normalizePhone(phone: string): string {
@@ -21,37 +21,26 @@ export class StudentService {
   }
 
   /**
-   * Find students by phone number.
-   * Returns students with their enrollments, courses, and latest payment info.
+   * Find student by phone number directly from the new flat schema.
    */
   static async findByPhone(phone: string) {
     const normalizedPhone = this.normalizePhone(phone);
 
-    const user = await prisma.user.findUnique({
+    // Return the student record directly since the schema is flattened
+    return prisma.student.findUnique({
       where: { phone: normalizedPhone },
       include: {
-        students: {
-          include: {
-            enrollments: {
-              where: { isActive: true },
-              include: {
-                course: true,
-              },
-            },
-            payments: {
-              orderBy: { createdAt: "desc" },
-              take: 5,
-            },
-          },
+        payments: {
+          orderBy: { createdAt: "desc" },
+          take: 5,
         },
       },
     });
-
-    return user;
   }
 
   /**
    * Register or update a Telegram user with their phone number.
+   * Then return the associated Student profile.
    */
   static async upsertUser(data: {
     telegramId: number;
@@ -62,7 +51,8 @@ export class StudentService {
   }) {
     const normalizedPhone = this.normalizePhone(data.phone);
 
-    return prisma.user.upsert({
+    // 1. Keep track of the Telegram User separately
+    await prisma.user.upsert({
       where: { telegramId: BigInt(data.telegramId) },
       update: {
         phone: normalizedPhone,
@@ -77,30 +67,16 @@ export class StudentService {
         lastName: data.lastName,
         username: data.username,
       },
-      include: {
-        students: {
-          include: {
-            enrollments: {
-              where: { isActive: true },
-              include: {
-                course: true,
-              },
-            },
-          },
-        },
-      },
     });
-  }
 
-  /**
-   * Get enrollment by ID with student and course data.
-   */
-  static async getEnrollment(enrollmentId: number) {
-    return prisma.enrollment.findUnique({
-      where: { id: enrollmentId },
+    // 2. Return the matching Student profile from the Excel data
+    return prisma.student.findUnique({
+      where: { phone: normalizedPhone },
       include: {
-        student: true,
-        course: true,
+        payments: {
+          orderBy: { createdAt: "desc" },
+          take: 5,
+        },
       },
     });
   }
@@ -112,16 +88,36 @@ export class StudentService {
     return prisma.student.findUnique({
       where: { id: studentId },
       include: {
-        user: true,
-        enrollments: {
-          where: { isActive: true },
-          include: { course: true },
-        },
         payments: {
           orderBy: { createdAt: "desc" },
           take: 10,
         },
       },
     });
+  }
+
+  /**
+   * Mocked getEnrollment to maintain compatibility with payment.handler.ts
+   * Since the schema is flat, we fake an enrollment object using the student's data.
+   */
+  static async getEnrollment(studentId: number) {
+    const student = await prisma.student.findUnique({
+      where: { id: studentId },
+    });
+    
+    if (!student) return null;
+    
+    return {
+      id: student.id,
+      isActive: true,
+      student: student,
+      course: {
+        id: student.id,
+        name: student.groupName || "O'quv kursi",
+        teacherName: student.teacher || "O'qituvchi",
+        schedule: student.classTime || "Noma'lum",
+        monthlyFee: student.groupBalance ? Math.abs(student.groupBalance) : 0,
+      }
+    };
   }
 }

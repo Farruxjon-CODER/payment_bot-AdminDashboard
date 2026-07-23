@@ -26,7 +26,7 @@ export default async function DashboardLayout({
       <div className="hidden h-full md:flex md:w-72 md:flex-col md:fixed md:inset-y-0 z-80">
         <Sidebar />
       </div>
-      <main className="md:pl-72 h-full bg-slate-50">
+      <main className="md:pl-72 h-full bg-slate-50 dark:bg-slate-950 transition-colors duration-300">
         <Header adminPhone={adminPhone} />
         <div className="p-8">{children}</div>
       </main>

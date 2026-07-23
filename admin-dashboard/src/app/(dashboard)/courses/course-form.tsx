@@ -13,6 +13,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { toast } from "sonner";
 import { createCourse, updateCourse } from "./actions";
 
 type CourseData = {
@@ -52,12 +53,19 @@ export function CourseForm({ mode, course, trigger }: CourseFormProps) {
     };
 
     startTransition(async () => {
-      if (mode === "edit" && course) {
-        await updateCourse(course.id, data);
-      } else {
-        await createCourse(data);
+      try {
+        if (mode === "edit" && course) {
+          await updateCourse(course.id, data);
+          toast.success("Guruh ma'lumotlari yangilandi!");
+        } else {
+          await createCourse(data);
+          toast.success("Yangi guruh muvaffaqiyatli qo'shildi!");
+        }
+        setOpen(false);
+      } catch (error) {
+        toast.error("Xatolik yuz berdi! Iltimos qaytadan urinib ko'ring.");
+        console.error(error);
       }
-      setOpen(false);
 
       // Reset form after creation
       if (mode === "create") {
@@ -72,7 +80,7 @@ export function CourseForm({ mode, course, trigger }: CourseFormProps) {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>{trigger}</DialogTrigger>
-      <DialogContent className="sm:max-w-[480px]">
+      <DialogContent className="sm:max-w-120">
         <DialogHeader>
           <DialogTitle>
             {mode === "create" ? "Yangi kurs qo'shish" : "Kursni tahrirlash"}
@@ -96,6 +104,8 @@ export function CourseForm({ mode, course, trigger }: CourseFormProps) {
               value={name}
               onChange={(e) => setName(e.target.value)}
               required
+              readOnly={mode === "edit"}
+              disabled={mode === "edit"}
             />
           </div>
 
